@@ -1,0 +1,993 @@
+SSH
+ssh-keygen -t rsa -b 4096
+scp -P port -i initial login@server:~/file C:/dir
+
+ufw allow 2900
+
+/etc/ssh/sshd_config
+Port 2090
+PermitRootLogin prohibit-password
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+UsePAM yes
+X11Forwarding yes
+PrintMotd no
+AcceptEnv LANG LC_*
+Subsystem sftp /usr/lib/openssh/sftp-server
+
+/////////////////////////////////////////////
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+IPsec
+
+/etc/sysctl.conf
+net.ipv4.ip_forward=1
+net.ipv4.conf.all.accept_redirects=0
+net.ipv4.conf.all.send__redirects=0
+net.ipv4.default.rp_filter=0
+net.ipv4.default.accept_source_route=0
+net.ipv4.default.send_redirects=0
+net.ipv4.icmpm_ignore_bogus_error_responses=1
+
+ufw allow 500
+ufw allow 4500
+
+/etc/rc.local
+iptables --append INPUT --protocol udp --destination-port 500 --jump ACCEPT
+iptables --append INPUT --protocol udp --destination-port 4500 --jump ACCEPT
+iptables --append INPUT --protocol esp --jump ACCEPT
+
+iptables -t nat -A POSTROUTING -j SNAT --to-source 51.83.31.157 -o eth+
+for vpn in /proc/sys/net/ipv4/conf/*; do echo 0 > $vpn/accept_redirects; echo 0 > $vpn/send_redirects; done
+
+exit0
+///////////////////
+
+ipsec pki --gen --type rsa --size 4096 --outform der > private/strongswanKey.der
+
+ipsec pki --self --ca --lifetime 3650 --in private/strongswanKey.der --type rsa --dn "C=RU, O=Horns and Hooves, CN=strongSwan Root CA" --outform der > cacerts/strongswanCert.der
+
+ipsec pki --gen --type rsa --size 4096 --outform der > private/vpnHostKey.der
+
+ipsec pki --pub --in private/vpnHostKey.der --type rsa | ipsec pki --issue --lifetime 730 --cacert cacerts/strongswanCert.der --cakey private/strongswanKey.der --dn "C=RU, O=Horns and Hooves, CN=ip157.ip-51-83-31.eu" --san ip157.ip-51-83-31.eu --san 51.83.31.157  --san @51.83.31.157 --flag serverAuth --flag ikeIntermediate --outform der > certs/vpnHostCert.der
+
+ipsec pki --gen --type rsa --size 2048 --outform der > private/kononenkoKey.der
+ipsec pki --gen --type rsa --size 2048 --outform der > private/zolotarevKey.der
+
+ipsec pki --pub --in private/kononenkoKey.der --type rsa | ipsec pki --issue --lifetime 730 --cacert cacerts/strongswanCert.der --cakey private/strongswanKey.der --dn "C=RU, O=Horns and Hooves, CN=kononenko@ip157.ip-51-83-31.eu" --san "kononenko@ip157.ip-51-83-31.eu" --san "kononenko@51.83.31.157" --outform der > certs/kononenkoCert.der
+
+ipsec pki --pub --in private/zolotarevKey.der --type rsa | ipsec pki --issue --lifetime 730 --cacert cacerts/strongswanCert.der --cakey private/strongswanKey.der --dn "C=RU, O=Horns and Hooves, CN=zolotarev@ip157.ip-51-83-31.eu" --san "zolotarev@ip157.ip-51-83-31.eu" --san "zolotarev@51.83.31.157" --outform der > certs/zolotarevCert.der
+
+openssl rsa -inform DER -in private/kononenkoKey.der -out private/kononenkoKey.pem -outform PEM
+openssl rsa -inform DER -in private/zolotarevKey.der -out private/zolotarevKey.pem -outform PEM
+
+openssl x509 -inform DER -in certs/kononenkoCert.der -out certs/kononenkoCert.pem -outform PEM
+openssl x509 -inform DER -in certs/zolotarevCert.der -out certs/zolotarevCert.pem -outform PEM
+
+openssl x509 -inform DER -in cacerts/strongswanCert.der -out cacerts/strongswanCert.pem -outform PEM
+
+openssl pkcs12 -export -inkey private/kononenkoKey.pem -in certs/kononenkoCert.pem -name "Kononenko VPN Certificate" -certfile cacerts/strongswanCert.pem -caname "strongSwan Root CA" -out p12/kononenko.p12
+
+openssl pkcs12 -export -inkey private/zolotarevKey.pem -in certs/zolotarevCert.pem -name "Zolotarev VPN Certificate" -certfile cacerts/strongswanCert.pem -caname "strongSwan Root CA" -out p12/zolotarev.p12
+
+
+/etc/ipsec.conf
+config setup
+    charondebug="ike 2, knl 2, cfg 2, net 2, esp 2, dmn 2,  mgr 2"
+
+conn %default
+    keyexchange=ikev2
+    ike=aes128-sha1-modp1024,aes128-sha1-modp1536,aes128-sha1-modp2048,aes128-sha256-ecp256,aes128-sha256-modp1024,a>    esp=aes128-aes256-sha1-sha256-modp2048-modp4096-modp1024,aes128-sha1,aes128-sha1-modp1024,aes128-sha1-modp1536,a>    dpdaction=clear
+    dpddelay=300s
+    authby=pubkey
+    left=%any
+    leftid=ip157.ip-51-83-31.eu
+    leftsubnet=0.0.0.0/0
+    leftcert=vpnHostCert.der
+    leftsendcert=always
+    right=%any
+    rightsourceip=10.42.42.0/24
+    rightdns=10.8.0.1
+
+conn IPSec-IKEv2
+    keyexchange=ikev2
+    auto=add
+
+/////////////////////////
+
+/etc/ipsec.secrets
+include /var/lib/strongswan/ipsec.secrets.inc
+
+: RSA vpnHostKey.der
+////////////////////////////
+
+
+
+
+
+
+
+OpenVPN
+
+wget -P ~/ https://github.com/OpenVPN/easy-rsa/releases/download/v3.0.4/EasyRSA-3.0.4.tgz
+tar xvf EasyRSA-3.0.4.tgz
+cd ~/EasyRSA-3.0.4/
+cp vars.example vars
+nano vars
+./easyrsa init-pki
+./easyrsa build-ca nopass
+./easyrsa gen-req server nopass
+./easyrsa sign-req server server
+./easyrsa gen-dh
+openvpn --genkey --secret ta.key
+sudo cp ~/EasyRSA-3.0.4/ta.key /etc/openvpn/
+sudo cp ~/EasyRSA-3.0.4/pki/dh.pem /etc/openvpn/
+mkdir -p ~/client-configs/keys
+chmod -R 700 ~/client-configs
+cd ~/EasyRSA-3.0.4/
+./easyrsa gen-req client1 nopass
+./easyrsa sign-req client client1
+sudo cp /usr/share/doc/openvpn/examples/sample-config-files/server.conf.gz /etc/openvpn/
+sudo gzip -d /etc/openvpn/server.conf.gz
+
+/etc/openvpn/server.conf
+tls-auth ta.key 0 
+cipher AES-256-CBC
+auth SHA256
+dh dh.pem
+user nobody
+group nogroup
+push "redirect-gateway def1 bypass-dhcp"
+push "dhcp-option DNS 208.67.222.222"
+push "dhcp-option DNS 208.67.220.220"
+port 1194
+proto udp
+explicit-exit-notify 0 (if proto tcp)
+cert server.crt
+key server.key
+//////////////////
+
+/etc/sysctl.conf
+net.ipv4.ip_forward=1
+///////
+
+sysctl -p
+
+/etc/ufw/before.rules
+# START OPENVPN RULES
+# NAT table rules
+*nat
+:POSTROUTING ACCEPT [0:0]
+# Allow traffic from OpenVPN client to wlp11s0 (change to the interface you discovered!)
+-A POSTROUTING -s 10.8.0.0/8 -o wlp11s0 -j MASQUERADE
+COMMIT
+# END OPENVPN RULES
+//////////////////////
+
+/etc/default/ufw
+DEFAULT_FORWARD_POLICY="ACCEPT"
+//////////////////////////
+
+ufw allow 1194/udp
+ufw allow OpenSSH
+ufw reload
+
+systemctl start openvpn@server
+systemctl enable openvpn@server
+
+
+cp /usr/share/doc/openvpn/examples/sample-config-files/client.conf ~/client-configs/base.conf
+
+~/client-configs/base.conf
+remote your_server_ip 1194
+proto udp
+user nobody
+group nogroup
+#ca ca.crt
+#cert client.crt
+#key client.key
+#tls-auth ta.key 1
+cipher AES-256-CBC
+auth SHA256
+key-direction 1
+
+# script-security 2
+# up /etc/openvpn/update-resolv-conf
+# down /etc/openvpn/update-resolv-conf
+/////////////////////
+
+~/client-configs/make_config.sh
+#!/bin/bash
+
+# First argument: Client identifier
+
+KEY_DIR=~/client-configs/keys
+OUTPUT_DIR=~/client-configs/files
+BASE_CONFIG=~/client-configs/base.conf
+
+cat ${BASE_CONFIG} \
+    <(echo -e '<ca>') \
+    ${KEY_DIR}/ca.crt \
+    <(echo -e '</ca>\n<cert>') \
+    ${KEY_DIR}/${1}.crt \
+    <(echo -e '</cert>\n<key>') \
+    ${KEY_DIR}/${1}.key \
+    <(echo -e '</key>\n<tls-auth>') \
+    ${KEY_DIR}/ta.key \
+    <(echo -e '</tls-auth>') \
+    > ${OUTPUT_DIR}/${1}.ovpn
+/////////////////////////////////
+
+chmod 700 ~/client-configs/make_config.sh
+
+sudo ./make_config.sh client1
+
+from local: sftp sammy@your_server_ip:client-configs/files/client1.ovpn ~/
+
+
+
+
+
+
+
+DNS unbound
+
+/etc/resolv.conf
+nameserver 127.0.0.1
+/////////////////////////
+
+/etc/unbound/unbound.conf
+# Unbound configuration file for Debian.
+#
+# See the unbound.conf(5) man page.
+#
+# See /usr/share/doc/unbound/examples/unbound.conf for a commented
+# reference config file.
+#
+# The following line includes additional configuration files from the
+# /etc/unbound/unbound.conf.d directory.
+include: "/etc/unbound/unbound.conf.d/*.conf"
+
+server:
+        directory: "/etc/unbound"
+        username: unbound
+#       chroot: "/etc/unbound"
+        pidfile: "/etc/unbound/unbound.pid"
+        root-hints: "/etc/unbound/root.hints"
+
+        access-control: 10.0.0.0/8 allow
+        access-control: 100.64.0.0/10 allow
+        access-control: 127.0.0.0/8 allow
+        access-control: 172.16.0.0/12 allow
+        access-control: 192.168.0.0/16 allow
+#       access-control: 176.117.226.209 allow
+#       access-control: 51.83.31.157 allow
+#       interface: 0.0.0.0                                                                            
+		interface: 127.0.0.1
+        interface: 10.8.0.1
+#       outgoing-interface: 10.8.0.2
+#       interface: 51.83.31.157
+        outgoing-interface: 51.83.31.157
+        port: 53
+
+        verbosity: 0
+        cache-max-ttl: 14400
+        cache-min-ttl: 60
+        hide-identity: yes
+        hide-version: yes
+        minimal-responses: yes
+        prefetch: yes
+        rrset-roundrobin: yes
+        use-caps-for-id: yes
+
+        do-tcp: yes
+        do-udp: yes
+        do-ip4: yes
+        do-ip6: no
+        ssl-upstream: yes
+
+        local-zone: "test.com" static
+        local-data: "test.com IN A 23.239.16.110"
+        local-data: "test.com IN A 23.239.16.110"
+        local-data-ptr: "23.239.16.110 test.com"
+
+forward-zone:
+        name: "."
+        forward-addr: 1.1.1.1@853
+        forward-addr: 9.9.9.9@853
+#       forward-addr: 8.8.4.4@53
+#       forward-addr: 8.8.8.8@53
+        forward-ssl-upstream: yes
+        forward-first: yes
+
+remote-control:
+        control-enable: yes
+        control-interface: 127.0.0.1
+        control-port: 953
+        server-key-file:   "unbound_server.key"
+        server-cert-file:  "unbound_server.pem"
+        control-key-file:  "unbound_control.key"
+        control-cert-file: "unbound_control.pem"
+////////////////////////////////////////////////////
+
+ufw allow 53
+
+
+
+
+
+
+
+Nginx + LetsEncrypt
+ufw allow 80
+ufw allow 443
+
+certbot certonly --standalone --agree-tos -m kononenko@ip157.ip-51-83-31.eu -d ip157.ip-51-83-31.eu
+
+/etc/nginx/nginx.conf
+user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+include /etc/nginx/modules-enabled/*.conf;
+
+events {
+        worker_connections 1024;
+        # multi_accept on;
+}
+
+http {
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
+        keepalive_timeout 65;
+        types_hash_max_size 2048;
+
+        # server_tokens off;
+
+        # server_names_hash_bucket_size 64;
+        # server_name_in_redirect off;
+
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+
+        ##
+        # SSL Settings
+        ##
+
+        ssl_protocols TLSv1 TLSv1.1 TLSv1.2; # Dropping SSLv3, ref: POODLE
+        ssl_prefer_server_ciphers on;
+
+        ##
+        # Logging Settings
+        ##
+
+        access_log /var/log/nginx/access.log;
+        error_log /var/log/nginx/error.log;
+
+        ##
+        # Gzip Settings
+        ##
+
+        gzip on;
+
+        # gzip_vary on;
+        # gzip_proxied any;
+        # gzip_comp_level 6;
+        # gzip_buffers 16 8k;
+        # gzip_http_version 1.1;
+        # gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript
+
+        ##
+        # Virtual Host Configs
+		##
+
+        include /etc/nginx/conf.d/*.conf;
+        include /etc/nginx/sites-enabled/*;
+}
+
+#mail {
+#       # See sample authentication script at:
+#       # http://wiki.nginx.org/ImapAuthenticateWithApachePhpScript
+#
+#       # auth_http localhost/auth.php;
+#       # pop3_capabilities "TOP" "USER";
+#       # imap_capabilities "IMAP4rev1" "UIDPLUS";
+#
+#       server {
+#               listen     localhost:110;
+#               protocol   pop3;
+#               proxy      on;
+#       }
+#
+#}
+/////////////////////////////////
+
+/etc/nginx/sites-enabled/default
+
+/etc/nginx/sites-enabled/seafile
+server {
+    listen 80;
+    server_name ip157.ip-51-83-31.eu;
+    return 301 https://ip157.ip-51-83-31.eu;
+}
+
+server {
+    listen 443 ssl default_server;
+    server_name ip157.ip-51-83-31.eu$request_uri;
+    root /var/www/html;
+    index index.html index.htm index.nginx-debian.html;
+
+    ssl_certificate /etc/letsencrypt/live/ip157.ip-51-83-31.eu/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ip157.ip-51-83-31.eu/privkey.pem;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
+
+
+.htaccess
+RewriteEngine On
+RewriteCond %{SERVER_PORT} !^443 $
+RewriteRule.* https://%{SERVER_NAME}%{REQUEST_URI} [R=301,L]
+/////////////////////////////
+
+/etc/letsencrypt/renew-letsencrypt.sh
+sudo certbot certonly --standalone --agree-tos -m kononenko@ip157.ip-51-83-31.eu -d ip157.ip-51-83-31.eu
+
+if [$? -ne 0] then
+        ERRORLOG=`tail /var/log/letsencrypt/letsencrypt/letsencrypt.log
+        echo -e "The Let's Encrypt cert has not been renewed!\n\n "
+                $ERRORLOG
+        else
+                nginx -s reload
+        fi
+
+exit 0
+////////////////////////////////////
+
+
+
+
+
+Seafile
+/etc/nginx/sites-enabled/seafile
+server {
+#   listen       3000;
+#   listen 80;
+    server_name  ip157.ip-51-83-31.eu;
+#   return 301 https://ip157.ip-51-83-31.eu:8080;
+    rewrite ^ https://$http_host$request_uri? permanent;
+    server_tokens off;
+}
+server {
+    listen 443 ssl http2;
+    server_name ip157.ip-51-83-31.eu;
+
+    ssl_certificate /etc/letsencrypt/live/ip157.ip-51-83-31.eu/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/ip157.ip-51-83-31.eu/privkey.pem;
+    ssl_session_timeout 5m;
+    ssl_session_cache shared:SSL:5m;
+
+    ssl_dhparam /etc/nginx/dhparam.pem;
+
+    #SSL Security
+    ssl_protocols TLSv1 TLSv1.1 TLSv1.2;
+    ssl_ciphers 'ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256';
+    ssl_ecdh_curve secp384r1;
+    ssl_prefer_server_ciphers on;
+    server_tokens off;
+    ssl_session_tickets off;
+
+    proxy_set_header X-Forwarded-For $remote_addr;
+
+    location / {
+    proxy_pass         http://127.0.0.1:8000;
+    proxy_set_header   Host $host;
+    proxy_set_header   X-Real-IP $remote_addr;
+    proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Host $server_name;
+    proxy_read_timeout  1200s;
+
+    # used for view/edit office file via Office Online Server
+    client_max_body_size 0;
+
+    access_log      /var/log/nginx/seahub.access.log;
+    error_log       /var/log/nginx/seahub.error.log;
+    }
+
+    location /seafdav {
+    proxy_pass         http://127.0.0.1:8080/seafdav;
+    proxy_set_header   Host $host;
+    proxy_set_header   X-Real-IP $remote_addr;
+    proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Host $server_name;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+    proxy_read_timeout  1200s;
+    client_max_body_size 0;
+
+    access_log      /var/log/nginx/seafdav.access.log;
+    error_log       /var/log/nginx/seafdav.error.log;
+    }
+
+    location /seafhttp {
+        rewrite ^/seafhttp(.*)$ $1 break;
+        proxy_pass http://127.0.0.1:8082;
+        client_max_body_size 0;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_connect_timeout  36000s;
+        proxy_read_timeout  36000s;
+        proxy_send_timeout  36000s;
+        send_timeout  36000s;
+    }
+    location /media {
+        root /home/ryujin/seafile-server-latest/seahub;
+    }
+}
+
+////////////////////////////////////////////
+
+ln -s /etc/nginx/sites-available/seafile /etc/nginx/sites-enabled/
+
+
+apt install python3 libpython3.8 python3-setuptools python3-pil python3-ldap python3-urllib3 ffmpeg python3-pip python3-mysqldb python3-memcache python3-requests libmemcached-dev
+
+pip3 install --timeout=3600 Pillow pylibmc captcha jinja2 sqlalchemy psd-tools django-pylibmc django-simple-captcha python3-ldap
+
+apt install mariadb-server -y
+systemctl start mariadb
+systemctl enable mariadb
+
+mysql_secure_installation
+Enter current password for root (enter for none): Press Enter
+Set root password? [Y/n] Y
+Remove anonymous users? [Y/n] Y
+Disallow root login remotely? [Y/n] Y
+Remove test database and access to it? [Y/n] Y  
+Reload privilege tables now? [Y/n] Y
+
+mysql -u root -p
+create database `ccnet-db` character set = 'utf8';
+create database `seafile-db` character set = 'utf8';
+create database `seahub-db` character set = 'utf8';
+
+create user 'seafile'@'localhost' identified by 'Hakase-Seafile01@';
+
+GRANT ALL PRIVILEGES ON `ccnet-db`.* to `seafile`@localhost;
+GRANT ALL PRIVILEGES ON `seafile-db`.* to `seafile`@localhost;
+GRANT ALL PRIVILEGES ON `seahub-db`.* to `seafile`@localhost;
+
+useradd -m -s /bin/bash ryujin
+su - ryujin
+wget -q https://s3.eu-central-1.amazonaws.com/download.seadrive.org/seafile-server_7.1.3_x86-64.tar.gz
+tar -xf seafile-server_7.1.3_x86-64.tar.gz
+mv seafile-server-*/ seafile-server/
+
+su - ryujin
+cd seafile-server/
+./setup-seafile-mysql.sh
+server name: input your seafile server name such as 'hakase-cloud'.
+server domain name: type the domain name for your seafile server 'cloud.hakase-labs.io'.
+seafile data directory: leave the configuration default and press enter.
+seafile fileserver port: leave it on the default port '8082'.
+database host: default localhost
+database port: default on mysql normal port '3306'
+database user is 'seafile' with password 'Hakase-Seafile01@'
+ccnet database: 'ccnet-db'
+seafile database: 'seafile-db'
+seahub database: 'seahub-db'
+
+su - ryujin
+cd ~/seafile-server-latest/
+./seafile.sh start
+./seahub.sh start
+./seafile.sh stop
+./seahub.sh stop
+
+su - ryujin
+cd conf/
+
+vim ccnet.conf
+SERVICE_URL = https://seafile.hakase-labs.io
+
+vim seafile.conf
+[fileserver]
+host = 127.0.0.1
+port = 8082
+
+vim seahub_settings.py
+FILE_SERVER_ROOT = 'https://seafile.hakase-labs.io/seafhttp'
+
+cd /etc/systemd/system/
+vim seafile.service
+
+[Unit]
+Description=Seafile
+After=network.target mysql.service nginx.service
+
+[Service]
+Type=forking
+ExecStart=/home/ryujin/seafile-server-latest/seafile.sh start
+ExecStop=/home/ryujin/seafile-server-latest/seafile.sh stop
+User=ryujin
+Group=ryujin
+
+[Install]
+WantedBy=multi-user.target
+
+
+vim seahub.service
+[Unit]
+Description=Seafile hub
+After=network.target seafile.service
+
+[Service]
+Type=forking
+ExecStart=/home/ryujin/seafile-server-latest/seahub.sh start
+ExecStop=/home/ryujin/seafile-server-latest/seahub.sh stop
+User=ryujin
+Group=ryujin
+
+[Install]
+WantedBy=multi-user.target
+
+
+systemctl daemon-reload
+systemctl start seafile
+systemctl enable seafile
+systemctl start seahub
+systemctl enable seahub
+
+
+apt install certbot
+certbot certonly --agree-tos --no-eff-email --email hakase@gmail.com -d seafile.hakase-labs.io
+
+openssl dhparam -out /etc/nginx/dhparam.pem 2048
+
+for svc in ssh http https
+do
+ufw allow $svc
+done
+
+
+
+
+Postfix
+
+https://www.dmosk.ru/miniinstruktions.php?mini=postfix-over-yandex
+https://www.newalive.net/98-postfix-otpravka-pochty-cherez-vneshniy-smtp.html (good)
+https://serveradmin.ru/postfix-nastrojka-relayhost-otdelnyj-dlya-kazhdogo-domena/
+https://www.digitalocean.com/community/tutorials/how-to-install-and-configure-postfix-on-ubuntu-20-04-ru
+https://www.linode.com/docs/email/email-services/postfix-smtp-debian7/
+https://ezyforanykey.blogspot.com/2018/05/postfix-dovecot-letsencrypt.html
+https://upcloud.com/community/tutorials/secure-postfix-using-lets-encrypt/
+https://jichu4n.com/posts/custom-domain-e-mails-with-postfix-and-gmail-the-missing-tutorial/
+https://www.linode.com/docs/email/email-services/configure-postfix-to-send-mail-using-gmail-and-google-apps-on-debian-or-ubuntu/
+https://www.digitalocean.com/community/tutorials/how-to-install-and-configure-postfix-on-ubuntu-18-04-ru
+https://1cloud.ru/help/linux/postfix-dovecot-na-ubuntu
+https://firstvds.ru/technology/ustanovka-i-nastroyka-pochtovogo-servera-postfix-s-hraneniem-pochtovyh-paroley-v-fayle
+https://habr.com/ru/company/dashamail/blog/478704/
+https://habr.com/ru/post/496018/
+
+SPF, и DKIM, и DMARC, PTR 
+Поля From и smtp.sender совпадают
+hostname корректный на машине
+проблема решилась отключением IPv6 на сервере (VDS в Hetzner)
+
+DKIM
+https://dkimcore.org/tools/keys.html
+https://livepage.pro/knowledge-base/email-in-spam.html#:~:text=%D0%92%20%D0%B1%D0%BE%D0%BB%D1%8C%D1%88%D0%B8%D0%BD%D1%81%D1%82%D0%B2%D0%B5%20%D1%81%D0%BB%D1%83%D1%87%D0%B0%D0%B5%D0%B2%20%D1%80%D0%B0%D1%81%D1%81%D1%8B%D0%BB%D0%BA%D0%B8%20%D0%BF%D0%BE%D0%BF%D0%B0%D0%B4%D0%B0%D1%8E%D1%82,%D0%94%D0%BE%D0%BC%D0%B5%D0%BD%20%E2%80%94%20%D1%8D%D1%82%D0%BE%20%D0%B0%D0%B4%D1%80%D0%B5%D1%81%20%D0%B2%D0%B0%D1%88%D0%B5%D0%B3%D0%BE%20%D1%81%D0%B0%D0%B9%D1%82%D0%B0.
+
+
+https://help.ubuntu.ru/wiki/postfix_dovecot_ldap_ubuntu_10_04
+
+test
+postsuper -d ALL
+sudo lsof -iTCP -sTCP:LISTEN -P
+
+echo "kek" | s-nail -s "msg" olehbeznosov@yandex.ru
+
+/etc/postfix/main.cf
+smtpd_banner = $myhostname ESMTP $mail_name (Ubuntu)
+biff = no
+append_dot_mydomain = no
+readme_directory = no
+myhostname = ip157.ip-51-83-31.eu
+#alias_maps = hash:/etc/aliases
+alias_database = hash:/etc/aliases
+myorigin = /etc/mailname
+mydestination = ip157.ip-51-83-31.eu, localhost.net, , localhost
+mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128
+mailbox_size_limit = 0
+recipient_delimiter = +
+inet_interfaces = all
+relayhost= [smtp.gmail.com]:587
+
+
+smtp_connection_cache_destinations = [smtp.gmail.com]:587
+smtp_use_tls = yes
+smtp_tls_security_level = encrypt
+smtp_sasl_auth_enable = yes
+smtp_sasl_password_maps = hash:/etc/postfix/mailpass
+smtp_sasl_security_options = noanonymous
+smtp_sender_dependent_authentication = yes
+sender_dependent_relayhost_maps = hash:/etc/postfix/sender_relay
+smtp_generic_maps = hash:/etc/postfix/generic
+smtp_tls_CAfile = /etc/postfix/cacert.pem
+soft_bounce = yes
+default_destination_concurrency_limit = 1
+smtp_tls_policy_maps = hash:/etc/postfix/tls_policy
+smtpd_recipient_restrictions=check_relay_domains
+
+inet-protocols = ipv4
+inet-interfaces = all
+
+virtual_alias_maps = hash:/etc/postfix/virtual
+home_mailbox=Maildir/
+
+////////////////////////////////////////////////////////////////////
+/etc/postfix/main.cf
+myhostname = mail.ip157.ip-51-83-31.eu
+mydomain = ip157.ip-51-83-31.eu
+myorigin = ip157.ip-51-83-31.eu
+mydestination = $mydomain, $myhostname, localhost
+mynetworks = 127.0.0.0/8, 192.168.0.0/16
+inet_interfaces = all
+
+home_mailbox=Maildir/
+virtual_alias_maps = hash:/etc/postfix/virtual
+virtual_alias_domains = ip157.ip-51-83-31.eu
+alias_maps = hash:/etc/aliases
+alias_database = hash:/etc/aliases
+
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = private/auth
+smtpd_sasl_auth_enable = yes
+smtpd_recipient_restrictions = permit_sasl_authenticated, permit_mynetworks, reject_unauth_destination
+
+smtpd_use_tls = yes
+smtpd_tls_cert_file = /etc/letsencrypt/live/ip157.ip-51-83-31.eu/fullchain.pem
+smtpd_tls_key_file = /etc/letsencrypt/live/ip157.ip-51-83-31.eu/privkey.pem
+
+
+
+
+/////////////
+
+///////////////////////////////////////
+/etc/postfix/mailpass(sasl_passwd)
+[smtp.gmail.com]:587               olehbeznosov@gmail.com:pass
+//////////////////////////////////////
+/etc/postfix/generic(canonical)
+www-data               olehbeznosov@gmail.com
+//////////////////////////////////////
+/etc/postfix/tls_policy
+[smtp.gmail.com]:587 encrypt
+/////////////////////////////////////
+/etc/postfix/sender_relay
+root@ip157.ip-51-83-31.eu [smtp.gmail.com]:587
+////////////////////////////////////
+/etc/postfix/virtual
+olehbeznosov@yandex.ru root
+vsolenaa@gmail.com kononenko
+///////////////////////////////////
+
+
+/etc/dovecot/dovecot.conf
+protocols = pop3 pop3s imap imaps
+dict {
+}
+!include conf.d/*.conf
+!include_try local.conf
+//////////////////////////////////
+
+/etc/dovecot/conf.d/10-auth.conf
+disable_plaintext_auth = yes
+auth_mechanisms = plain login
+!include auth-system.conf.ext
+/////////////////////////////////
+
+/etc/dovecot/conf.d/10-mail.conf
+mail_location = maildir:~/Maildir
+namespace inbox {
+    inbox = yes
+}
+mail_privileged_group = mail
+protocol !indexer-worker {}
+/////////////////////////////////
+
+/etc/dovecot/conf.d/10-master.conf
+service imap-login {
+  inet_listener imap {
+    port = 143
+  }
+  inet_listener imaps {
+    port = 993
+    ssl = yes
+  }
+}
+service submission-login {
+  inet_listener submission {
+    #port = 587
+  }
+}
+
+service lmtp {
+  unix_listener lmtp {
+    #mode = 0666
+  }
+}
+service imap {
+  # Most of the memory goes to mmap()ing files. You may need to increase this
+  # limit if you have huge mailboxes.
+  #vsz_limit = $default_vsz_limit
+
+  # Max. number of IMAP processes (connections)
+  #process_limit = 1024
+}
+
+service pop3 {
+  # Max. number of POP3 processes (connections)
+  #process_limit = 1024
+}
+
+service submission {
+  # Max. number of SMTP Submission processes (connections)
+  #process_limit = 1024
+}
+service auth {
+  # auth_socket_path points to this userdb socket by default. It's typically
+  # used by dovecot-lda, doveadm, possibly imap process, etc. Users that have
+  # full permissions to this socket are able to get a list of all usernames and
+  # get the results of everyone's userdb lookups.
+  #
+  # The default 0666 mode allows anyone to connect to the socket, but the
+  # userdb lookups will succeed only if the userdb returns an "uid" field that
+  # matches the caller process's UID. Also if caller's uid or gid matches the
+  # socket's uid or gid the lookup succeeds. Anything else causes a failure.
+  #
+  # To give the caller full permissions to lookup all users, set the mode to
+  # something else than 0666 and Dovecot lets the kernel enforce the
+  # permissions (e.g. 0777 allows everyone full permissions).
+  unix_listener auth-userdb {
+    mode = 0666
+    user = postfix
+    group = postfix
+  }
+
+  # Postfix smtp-auth
+  unix_listener /var/spool/postfix/private/auth {
+    mode = 0666
+    user = postfix
+    group = postfix
+  }
+
+  # Auth process is run as this user.
+  #user = $default_internal_user
+}
+
+service auth-worker {
+  # Auth worker process is run as root by default, so that it can access
+  # /etc/shadow. If this isn't necessary, the user should be changed to
+  # $default_internal_user.
+  #user = root
+}
+
+service dict {
+  # If dict proxy is used, mail processes should have access to its socket.
+  # For example: mode=0660, group=vmail and global mail_access_groups=vmail
+  unix_listener dict {
+    #mode = 0600
+    #user =
+    #group =
+  }
+}
+//////////////////////////////////////
+
+/etc/dovecot/conf.d/10-ssl.conf
+ssl = yes
+ssl_cert = </etc/letsencrypt/live/ip157.ip-51-83-31.eu/fullchain.pem
+ssl_key = </etc/letsencrypt/live/ip157.ip-51-83-31.eu/privkey.pem
+ssl_client_ca_dir = /etc/ssl/certs
+ssl_dh = </usr/share/dovecot/dh.pem
+ssl_min_protocol = TLSv1
+//////////////////////////////////////
+
+
+ufw allow 25
+ufw allow 110
+ufw allow 143
+ufw allow 993
+ufw allow 995
+////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+
+
+
+
+
+
+
+
+
+Phish site
+/etc/nginx/sites-available/phish
+server {
+	listen 5005;
+	server_name ip157.ip-51-83-31.eu;
+	return 301 https://$server_name:5050$request_uri
+}
+
+server {
+        listen 5050 ssl http2;
+        server_name ip157.ip-51-83-31.eu;
+        root /var/www/html/phish;
+        index index.html;
+
+        ssl_certificate /etc/letsencrypt/live/ip157.ip-51-83-31.eu/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/ip157.ip-51-83-31.eu/privkey.pem;
+        ssl_session_timeout 5m;
+        ssl_session_cache shared:SSL:5m;
+
+        ssl_dhparam /etc/nginx/dhparam.pem;
+
+        #SSL Security
+        ssl_protocols TLSv1 TLSv1.1 TLSv1.2;
+        ssl_ciphers 'ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-SHA384:ECDHE-RSA-AES256-SHA384:ECDHE-ECDSA-AES128-SHA256:ECDHE-RSA-AES128-SHA256';
+        ssl_ecdh_curve secp384r1;
+        ssl_prefer_server_ciphers on;
+        server_tokens off;
+        ssl_session_tickets off;
+
+        location ~ \.php$ {
+                try_files $uri $uri/ =404;
+                include fastcgi_params;
+                fastcgi_pass unix:/var/run/php/php7.4-fpm.sock;
+                fastcgi_index index.php;
+
+                fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        }
+
+        location / {
+                index index.php index.html index.htm;
+        }
+
+#       error_page 405 =200 $uri;
+}
+////////////////////////////////////////////////////
+
+ufw allow 5005
+ufw allow 5050
+
+/////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+Cleaning
+https://disnetern.ru/spy-linux-clear-history/
+https://habr.com/ru/post/53590/
+
+NOW=$(date) && date -s "2030-08-15 21:30:11" && touch /etc/ssh/sshd_config .ssh/authorized_keys .ssh && date -s "$NOW" && echo > /var/log/wtmp && echo > /var/log/btmp && echo > /var/log/lastlog && NOW=$(date) && date -s "2030-08-15 21:30:11" && touch /var/log/wtmp /var/log/btmp /var/log/lastlog && date -s "$NOW" && history -c && unset NOW && kill -9 $$
+
+
+
+Change ssh hi
+https://www.aitishnik.ru/izmenyaem-privetstvie-v-ssh-debian.html

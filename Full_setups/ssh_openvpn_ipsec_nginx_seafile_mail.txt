@@ -34,6 +34,8 @@ Subsystem sftp /usr/lib/openssh/sftp-server
 
 IPsec
 
+https://www.digitalocean.com/community/tutorials/how-to-set-up-an-ikev2-vpn-server-with-strongswan-on-ubuntu-16-04
+
 /etc/sysctl.conf
 net.ipv4.ip_forward=1
 net.ipv4.conf.all.accept_redirects=0
@@ -90,26 +92,35 @@ config setup
     charondebug="ike 2, knl 2, cfg 2, net 2, esp 2, dmn 2,  mgr 2"
 
 conn %default
+    auto=add
+    compress=no
+    type=tunnel
+    fragmentation=yes
+    forceencaps=yes
+    rekey=no
     keyexchange=ikev2
     dpddelay=300s
+    
     ike=aes128-sha1-modp1024,aes128-sha1-modp1536,aes128-sha1-modp2048,aes128-sha256-ecp256,aes128-sha256-modp1024,aes128-sha256-modp1536,aes128-sha256-modp2048,aes256-aes128-sha256-sha1-modp2048-modp4096-modp1024,aes256-sha1-modp1024,aes256-sha256-modp1024,aes256-sha256-modp1536,aes256-sha256-modp2048,aes256-sha256-modp4096,aes256-sha384-ecp384,aes256-sha384-modp1024,aes256-sha384-modp1536,aes256-sha384-modp2048,aes256-sha384-modp4096,aes256gcm16-aes256gcm12-aes128gcm16-aes128gcm12-sha256-sha1-modp2048-modp4096-modp1024,3des-sha1-modp1024!    
+    
     esp=aes128-aes256-sha1-sha256-modp2048-modp4096-modp1024,aes128-sha1,aes128-sha1-modp1024,aes128-sha1-modp1536,aes128-sha1-modp2048,aes128-sha256,aes128-sha256-ecp256,aes128-sha256-modp1024,aes128-sha256-modp1536,aes128-sha256-modp2048,aes128gcm12-aes128gcm16-aes256gcm12-aes256gcm16-modp2048-modp4096-modp1024,aes128gcm16,aes128gcm16-ecp256,aes256-sha1,aes256-sha256,aes256-sha256-modp1024,aes256-sha256-modp1536,aes256-sha256-modp2048,aes256-sha256-modp4096,aes256-sha384,aes256-sha384-ecp384,aes256-sha384-modp1024,aes256-sha384-modp1536,aes256-sha384-modp2048,aes256-sha384-modp4096,aes256gcm16,aes256gcm16-ecp384,3des-sha1!
-    dpdaction=clear
-    authby=pubkey
+
     left=%any
-    leftid=ip157.ip-51-83-31.eu
+    leftid=@ipsec.aquila.cloudns.cl
     leftsubnet=0.0.0.0/0
     leftcert=vpnHostCert.der
     leftsendcert=always
     right=%any
-    rightsourceip=10.42.42.0/24
+    rightid=%any
+    rightsourceip=10.10.0.0/24
     rightdns=10.8.0.1
-
+    rightsendcert=never
+    authby=pubkey
+    eap_identity=%identity
+#    rightauth=eap-mschapv2
 conn IPSec-IKEv2
     keyexchange=ikev2
-    auto=add
-
-/////////////////////////
+    auto=add/////////////////////////
 
 /etc/ipsec.secrets
 include /var/lib/strongswan/ipsec.secrets.inc
@@ -124,6 +135,8 @@ include /var/lib/strongswan/ipsec.secrets.inc
 
 
 OpenVPN
+
+https://www.digitalocean.com/community/tutorials/how-to-set-up-an-openvpn-server-on-ubuntu-18-04-ru
 
 wget -P ~/ https://github.com/OpenVPN/easy-rsa/releases/download/v3.0.4/EasyRSA-3.0.4.tgz
 tar xvf EasyRSA-3.0.4.tgz
@@ -195,21 +208,19 @@ systemctl enable openvpn@server
 cp /usr/share/doc/openvpn/examples/sample-config-files/client.conf ~/client-configs/base.conf
 
 ~/client-configs/base.conf
-remote your_server_ip 1194
+client
+dev tun
 proto udp
-user nobody
-group nogroup
-#ca ca.crt
-#cert client.crt
-#key client.key
-#tls-auth ta.key 1
+remote openvpn.aquila.cloudns.cl 1194
+remote-cert-tls server
 cipher AES-256-CBC
 auth SHA256
 key-direction 1
-
-# script-security 2
-# up /etc/openvpn/update-resolv-conf
-# down /etc/openvpn/update-resolv-conf
+resolv-retry infinite
+nobind
+persist-key
+persist-tun
+verb 3
 /////////////////////
 
 ~/client-configs/make_config.sh
@@ -423,18 +434,18 @@ http {
 /etc/nginx/sites-enabled/seafile
 server {
     listen 80;
-    server_name ip157.ip-51-83-31.eu;
-    return 301 https://ip157.ip-51-83-31.eu;
+    server_name seafile.aquila.cloudns.cl;
+    return 301 https://seafile.aquila.cloudns.cl;
 }
 
 server {
     listen 443 ssl default_server;
-    server_name ip157.ip-51-83-31.eu$request_uri;
+    server_name seafile.aquila.cloudns.cl;
     root /var/www/html;
     index index.html index.htm index.nginx-debian.html;
 
-    ssl_certificate /etc/letsencrypt/live/ip157.ip-51-83-31.eu/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/ip157.ip-51-83-31.eu/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/seafile.aquila.cloudns.cl/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/seafile.aquila.cloudns.cl/privkey.pem;
 
     location / {
         try_files $uri $uri/ =404;
@@ -471,17 +482,17 @@ Seafile
 server {
 #   listen       3000;
 #   listen 80;
-    server_name  ip157.ip-51-83-31.eu;
-#   return 301 https://ip157.ip-51-83-31.eu:8080;
+    server_name  seafile.aquila.cloudns.cl;
+#   return 301 https://seafile.aquila.cloudns.cl:8080;
     rewrite ^ https://$http_host$request_uri? permanent;
     server_tokens off;
 }
 server {
     listen 443 ssl http2;
-    server_name ip157.ip-51-83-31.eu;
+    server_name seafile.aquila.cloudns.cl;
 
-    ssl_certificate /etc/letsencrypt/live/ip157.ip-51-83-31.eu/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/ip157.ip-51-83-31.eu/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/seafile.aquila.cloudns.cl/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/seafile.aquila.cloudns.cl/privkey.pem;
     ssl_session_timeout 5m;
     ssl_session_cache shared:SSL:5m;
 
@@ -987,9 +998,9 @@ Cleaning
 https://disnetern.ru/spy-linux-clear-history/
 https://habr.com/ru/post/53590/
 
-NOW=$(date) && date -s "2020-08-15 21:30:11" 
+NOW=$(date) && date -s "2020-12-01 21:30:11" 
 && echo | tee /var/log/wtmp /var/log/btmp /var/log/lastlog 
-//&& date -s "2020-08-15 21:30:11" 
+//&& date -s "2020-12-01 21:30:11" 
 //&& touch /var/log/wtmp /var/log/btmp /var/log/lastlog 
 && date -s "$NOW" && unset NOW && history -c 
 && kill -9 $$
